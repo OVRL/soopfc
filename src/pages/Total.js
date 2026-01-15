@@ -627,7 +627,7 @@ const Total = () => {
                       </StatRow>
                       <StatRow>
                         <StatHeader>
-                          <StatLabel>2025 득점</StatLabel>
+                          <StatLabel>2026 득점</StatLabel>
                           <StatValue color={getRankColor(playerInfo.goalsRank)}>
                             {playerInfo.goals || 0} 골 ({playerInfo.goalsRank}위)
                           </StatValue>
@@ -638,7 +638,7 @@ const Total = () => {
                       </StatRow>
                       <StatRow>
                         <StatHeader>
-                          <StatLabel>2025 어시스트</StatLabel>
+                          <StatLabel>2026 어시스트</StatLabel>
                           <StatValue color={getRankColor(playerInfo.assistsRank)}>
                             {playerInfo.assists || 0} 어시 ({playerInfo.assistsRank}위)
                           </StatValue>
@@ -649,7 +649,7 @@ const Total = () => {
                       </StatRow>
                       <StatRow>
                         <StatHeader>
-                          <StatLabel>2025 클린시트</StatLabel>
+                          <StatLabel>2026 클린시트</StatLabel>
                           <StatValue color={getRankColor(playerInfo.cleanSheetsRank)}>
                             {playerInfo.cleanSheets || 0} ({playerInfo.cleanSheetsRank}위)
                           </StatValue>

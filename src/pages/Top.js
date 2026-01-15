@@ -33,7 +33,7 @@ const TOP = () => {
   const [showMorePopup, setShowMorePopup] = useState(null);
   const [positions, setPositions] = useState({});
   const [sortKey, setSortKey] = useState('matches');
-  const [currentYear, setCurrentYear] = useState('2025');
+  const [currentYear, setCurrentYear] = useState(null); // 처음엔 null → 자동 설정
   const [hasData, setHasData] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
@@ -43,7 +43,31 @@ const TOP = () => {
   const startX = useRef(0);
   const scrollLeft = useRef(0);
 
-  // 사진 자동 로딩 + 없으면 logo194.png 대체
+  // 현재 시즌 판단 (클라이언트 기준)
+  const getCurrentSeason = () => {
+    const now = new Date();
+    return now.getFullYear().toString(); // 2026
+  };
+
+  // 지원 연도 목록 자동 생성 (2022 ~ 현재년도)
+  const availableYears = useMemo(() => {
+    const startYear = 2022;
+    const current = parseInt(getCurrentSeason());
+    const years = [];
+    for (let y = startYear; y <= current; y++) {
+      years.push(y.toString());
+    }
+    return years; // ['2022','2023','2024','2025','2026']
+  }, []);
+
+  // 최초 로드 시 가장 최근 연도 자동 선택
+  useEffect(() => {
+    if (availableYears.length > 0 && !currentYear) {
+      setCurrentYear(availableYears[availableYears.length - 1]); // 2026
+    }
+  }, [availableYears, currentYear]);
+
+  // 사진 자동 로딩 + fallback
   const PlayerAvatar = ({ name, style }) => {
     const imageUrl = `/players/${name}.png`;
     return (
@@ -52,22 +76,27 @@ const TOP = () => {
         alt={name}
         style={style}
         onError={(e) => {
-          e.target.src = '/logo194.png'; // 사진 없으면 logo194.png
+          e.target.src = '/logo194.png';
         }}
       />
     );
   };
 
   useEffect(() => {
+    if (!currentYear) return;
+
     const fetchAllData = async () => {
       try {
         let playerData = [];
         let positionMap = {};
 
-        if (currentYear === '2025') {
+        const isCurrentSeason = currentYear === getCurrentSeason();
+
+        if (isCurrentSeason) {
+          // 2026년 → 실시간 집계
           const [playerSnap, matchesSnap] = await Promise.all([
             getDocs(collection(db, 'players')),
-            getDocs(query(collection(db, 'matches')))
+            getDocs(query(collection(db, 'matches'))),
           ]);
 
           playerData = playerSnap.docs.map((doc) => doc.data());
@@ -75,7 +104,10 @@ const TOP = () => {
           const playerPositions = {};
           matchesSnap.forEach((matchDoc) => {
             const matchData = matchDoc.data();
-            const matchYear = matchData.date ? new Date(matchData.date).getFullYear().toString() : null;
+            const matchYear = matchData.date
+              ? new Date(matchData.date).getFullYear().toString()
+              : null;
+
             if (matchYear !== currentYear) return;
 
             const quarters = matchData.quarters || [];
@@ -86,7 +118,8 @@ const TOP = () => {
                     playerPositions[player.name] = {};
                   }
                   const unifiedPos = unifyPosition(player.position);
-                  playerPositions[player.name][unifiedPos] = (playerPositions[player.name][unifiedPos] || 0) + 1;
+                  playerPositions[player.name][unifiedPos] =
+                    (playerPositions[player.name][unifiedPos] || 0) + 1;
                 });
               });
             });
@@ -99,26 +132,26 @@ const TOP = () => {
               positionMap[name] = sorted[0][0];
             }
           }
-
         } else {
+          // 2022~2025 → history 서브컬렉션
           const snap = await getDocs(collection(db, 'players'));
           const yearlyDataPromises = snap.docs.map(async (playerDoc) => {
             const historyRef = doc(db, 'players', playerDoc.id, 'history', currentYear);
             const historyDoc = await getDoc(historyRef);
             if (historyDoc.exists()) {
               const historyData = historyDoc.data();
-              if (historyData.matches > 0) {
+              if ((historyData.matches || 0) > 0) {
                 return {
                   ...historyData,
-                  name: playerDoc.data().name,
+                  name: playerDoc.data().name || playerDoc.id,
                 };
               }
             }
             return null;
           });
 
-          const yearlyData = (await Promise.all(yearlyDataPromises)).filter(data => data !== null);
-          playerData = yearlyData.map(data => ({
+          const yearlyData = (await Promise.all(yearlyDataPromises)).filter(Boolean);
+          playerData = yearlyData.map((data) => ({
             ...data,
             goals: data.goals || 0,
             assists: data.assists || 0,
@@ -139,11 +172,16 @@ const TOP = () => {
         setPlayers(playerData);
         setPositions(positionMap);
 
-        const latestPlayer = playerData.sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0))[0];
-        if (latestPlayer && latestPlayer.updatedAt) {
-          setLastUpdated(new Date(latestPlayer.updatedAt.seconds * 1000));
-        }
+        // 마지막 업데이트 시간 (현재 시즌일 때만 의미 있음)
+        if (isCurrentSeason) {
+          const latestPlayer = playerData
+            .filter(p => p.updatedAt)
+            .sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0))[0];
 
+          if (latestPlayer?.updatedAt) {
+            setLastUpdated(new Date(latestPlayer.updatedAt.seconds * 1000));
+          }
+        }
       } catch (err) {
         console.error(`Error fetching data for ${currentYear}:`, err);
         setHasData(false);
@@ -161,23 +199,22 @@ const TOP = () => {
   }, [currentYear]);
 
   const processedPlayers = useMemo(() => {
-    return players.map(player => ({
+    return players.map((player) => ({
       ...player,
       attackPoints: (player.goals || 0) + (player.assists || 0),
       position: positions[player.name] || null,
     }));
   }, [players, positions]);
 
+  // 나머지 부분은 기존과 동일 (statsCategories, sortedAndFilteredPlayers, handle 함수들 등)
   const statsCategories = useMemo(() => {
     if (!hasData) return [];
 
     const calculateRankings = (key, unit, title) => {
       const sortedPlayers = [...processedPlayers]
-        .filter(p => p[key] > 0)
+        .filter((p) => p[key] > 0)
         .sort((a, b) => {
-          if (b[key] === a[key]) {
-            return (b.matches || 0) - (a.matches || 0);
-          }
+          if (b[key] === a[key]) return (b.matches || 0) - (a.matches || 0);
           return b[key] - a[key];
         });
 
@@ -222,9 +259,7 @@ const TOP = () => {
     const sorted = [...processedPlayers].sort((a, b) => {
       const aValue = a[sortKey] || 0;
       const bValue = b[sortKey] || 0;
-      if (bValue === aValue) {
-        return (b.matches || 0) - (a.matches || 0);
-      }
+      if (bValue === aValue) return (b.matches || 0) - (a.matches || 0);
       return bValue - aValue;
     });
 
@@ -240,23 +275,26 @@ const TOP = () => {
 
     if (fullRankingSearch.trim()) {
       const nicknameLower = fullRankingSearch.toLowerCase();
-      return rankedPlayers.filter(player => player.name.toLowerCase().includes(nicknameLower));
+      return rankedPlayers.filter((player) =>
+        player.name.toLowerCase().includes(nicknameLower)
+      );
     }
     return rankedPlayers;
   }, [processedPlayers, sortKey, fullRankingSearch]);
 
   const handleNavClick = (direction) => {
-    const years = ['2022', '2023', '2024', '2025'];
-    const currentIndex = years.indexOf(currentYear);
-    let newIndex;
+    const currentIndex = availableYears.indexOf(currentYear);
+    if (currentIndex === -1) return;
+
+    let newIndex = currentIndex;
     if (direction === 'left') {
-      newIndex = currentIndex - 1;
+      newIndex--;
       if (newIndex < 0) return;
     } else {
-      newIndex = currentIndex + 1;
-      if (newIndex >= years.length) return;
+      newIndex++;
+      if (newIndex >= availableYears.length) return;
     }
-    setCurrentYear(years[newIndex]);
+    setCurrentYear(availableYears[newIndex]);
   };
 
   const handleSearch = () => {
@@ -264,9 +302,9 @@ const TOP = () => {
     const nicknameLower = searchNickname.toLowerCase();
 
     const getRank = (key) => {
-      const category = statsCategories.find(c => c.id === key);
+      const category = statsCategories.find((c) => c.id === key);
       if (!category) return { rank: '-', value: 0 };
-      const player = category.players.find(p => p.name.toLowerCase() === nicknameLower);
+      const player = category.players.find((p) => p.name.toLowerCase() === nicknameLower);
       return player ? { rank: player.rank, value: player.value } : { rank: '-', value: 0 };
     };
 
@@ -298,7 +336,7 @@ const TOP = () => {
   };
 
   const handleCategoryChange = (category) => {
-    setShowMorePopup(prev => ({
+    setShowMorePopup((prev) => ({
       ...prev,
       selectedCategory: category,
     }));
@@ -308,9 +346,7 @@ const TOP = () => {
     setSortKey(key);
   };
 
-  const handleFullRankingKeyDown = (e) => {
-    if (e.key === 'Enter') { }
-  };
+  const handleFullRankingKeyDown = () => {};
 
   const handleMouseDown = (e) => {
     isDragging.current = true;
@@ -358,28 +394,53 @@ const TOP = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const isPositionVisible = currentYear === '2025';
+  const isPositionVisible = currentYear === getCurrentSeason();
+
+  if (!currentYear) {
+    return <div style={{ textAlign: 'center', padding: '100px 0' }}>시즌 정보를 불러오는 중...</div>;
+  }
 
   return (
     <Styles.Container>
       {lastUpdated && (
-        <div style={{ textAlign: 'right', width: '100%', fontSize: '14px', color: '#4e5968', marginTop: '-24px', marginBottom: '40px' }}>
-          마지막 업데이트: {lastUpdated.toLocaleDateString('ko-KR')} {lastUpdated.toLocaleTimeString('ko-KR')}
+        <div
+          style={{
+            textAlign: 'right',
+            width: '100%',
+            fontSize: '14px',
+            color: '#4e5968',
+            marginTop: '-24px',
+            marginBottom: '40px',
+          }}
+        >
+          마지막 업데이트: {lastUpdated.toLocaleDateString('ko-KR')}{' '}
+          {lastUpdated.toLocaleTimeString('ko-KR')}
         </div>
       )}
 
       <Styles.Header>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
-          <Styles.NavArrow disabled={currentYear === '2022'} onClick={() => handleNavClick('left')}>
+          <Styles.NavArrow
+            disabled={currentYear === availableYears[0]}
+            onClick={() => handleNavClick('left')}
+          >
             ❮
           </Styles.NavArrow>
           <Styles.Title>{currentYear}시즌</Styles.Title>
-          <Styles.NavArrow disabled={currentYear === '2025'} onClick={() => handleNavClick('right')}>
+          <Styles.NavArrow
+            disabled={currentYear === availableYears[availableYears.length - 1]}
+            onClick={() => handleNavClick('right')}
+          >
             ❯
           </Styles.NavArrow>
         </div>
         <Styles.SearchContainer>
-          <Styles.SearchInput value={searchNickname} onChange={(e) => setSearchNickname(e.target.value)} onKeyDown={handleKeyDown} placeholder="닉네임 입력" />
+          <Styles.SearchInput
+            value={searchNickname}
+            onChange={(e) => setSearchNickname(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="닉네임 입력"
+          />
           <Styles.SearchButton onClick={handleSearch}>검색</Styles.SearchButton>
         </Styles.SearchContainer>
       </Styles.Header>
@@ -408,12 +469,9 @@ const TOP = () => {
                               name={player.name}
                               style={{
                                 width: '36px',
-                                // height: '38px',
-                                // borderRadius: '50%',
                                 marginRight: '10px',
                                 objectFit: 'cover',
                                 border: '2px solid #fff',
-                                // boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
                               }}
                             />
                             <div>
@@ -423,7 +481,10 @@ const TOP = () => {
                               )}
                             </div>
                           </Styles.PlayerInfo>
-                          <Styles.PlayerStat>{player.value}{category.unit}</Styles.PlayerStat>
+                          <Styles.PlayerStat>
+                            {player.value}
+                            {category.unit}
+                          </Styles.PlayerStat>
                         </Styles.RankingItem>
                       ))}
                     </Styles.RankingList>
@@ -431,7 +492,7 @@ const TOP = () => {
                   </Styles.StatsCard>
                 ))
               ) : (
-                <Styles.NoDataMessage>해당 연도에는 기록하지 않았습니다.</Styles.NoDataMessage>
+                <Styles.NoDataMessage>해당 연도에는 기록이 없습니다.</Styles.NoDataMessage>
               )}
             </Styles.StatsScroll>
           </Styles.StatsContainer>
@@ -439,7 +500,12 @@ const TOP = () => {
           <Styles.FullRankingSection>
             <Styles.FullRankingTitle>전체 순위</Styles.FullRankingTitle>
             <Styles.FullRankingSearchContainer>
-              <Styles.SearchInput value={fullRankingSearch} onChange={(e) => setFullRankingSearch(e.target.value)} onKeyDown={handleFullRankingKeyDown} placeholder="닉네임 검색" />
+              <Styles.SearchInput
+                value={fullRankingSearch}
+                onChange={(e) => setFullRankingSearch(e.target.value)}
+                onKeyDown={handleFullRankingKeyDown}
+                placeholder="닉네임 검색"
+              />
             </Styles.FullRankingSearchContainer>
 
             {sortedAndFilteredPlayers.length > 0 ? (
@@ -456,18 +522,44 @@ const TOP = () => {
                 <Styles.FullRankingTable>
                   <thead>
                     <tr>
-                      <Styles.TableHeader active={sortKey === 'rank'} onClick={() => handleSort('rank')}>등수</Styles.TableHeader>
-                      <Styles.TableHeader active={sortKey === 'name'} onClick={() => handleSort('name')}>이름</Styles.TableHeader>
-                      {isPositionVisible && <Styles.TableHeader active={sortKey === 'position'} onClick={() => handleSort('position')}>포지션</Styles.TableHeader>}
-                      <Styles.TableHeader active={sortKey === 'matches'} onClick={() => handleSort('matches')}>출장수</Styles.TableHeader>
-                      <Styles.TableHeader active={sortKey === 'goals'} onClick={() => handleSort('goals')}>득점</Styles.TableHeader>
-                      <Styles.TableHeader active={sortKey === 'assists'} onClick={() => handleSort('assists')}>도움</Styles.TableHeader>
-                      <Styles.TableHeader active={sortKey === 'attackPoints'} onClick={() => handleSort('attackPoints')}>공격P</Styles.TableHeader>
-                      <Styles.TableHeader active={sortKey === 'cleanSheets'} onClick={() => handleSort('cleanSheets')}>클린시트</Styles.TableHeader>
-                      <Styles.TableHeader active={sortKey === 'momScore'} onClick={() => handleSort('momScore')}>파워랭킹</Styles.TableHeader>
-                      <Styles.TableHeader active={sortKey === 'momTop3Count'} onClick={() => handleSort('momTop3Count')}>TOP3</Styles.TableHeader>
-                      <Styles.TableHeader active={sortKey === 'momTop8Count'} onClick={() => handleSort('momTop8Count')}>TOP8</Styles.TableHeader>
-                      <Styles.TableHeader active={sortKey === 'personalPoints'} onClick={() => handleSort('personalPoints')}>승점</Styles.TableHeader>
+                      <Styles.TableHeader active={sortKey === 'rank'} onClick={() => handleSort('rank')}>
+                        등수
+                      </Styles.TableHeader>
+                      <Styles.TableHeader active={sortKey === 'name'} onClick={() => handleSort('name')}>
+                        이름
+                      </Styles.TableHeader>
+                      {isPositionVisible && (
+                        <Styles.TableHeader active={sortKey === 'position'} onClick={() => handleSort('position')}>
+                          포지션
+                        </Styles.TableHeader>
+                      )}
+                      <Styles.TableHeader active={sortKey === 'matches'} onClick={() => handleSort('matches')}>
+                        출장수
+                      </Styles.TableHeader>
+                      <Styles.TableHeader active={sortKey === 'goals'} onClick={() => handleSort('goals')}>
+                        득점
+                      </Styles.TableHeader>
+                      <Styles.TableHeader active={sortKey === 'assists'} onClick={() => handleSort('assists')}>
+                        도움
+                      </Styles.TableHeader>
+                      <Styles.TableHeader active={sortKey === 'attackPoints'} onClick={() => handleSort('attackPoints')}>
+                        공격P
+                      </Styles.TableHeader>
+                      <Styles.TableHeader active={sortKey === 'cleanSheets'} onClick={() => handleSort('cleanSheets')}>
+                        클린시트
+                      </Styles.TableHeader>
+                      <Styles.TableHeader active={sortKey === 'momScore'} onClick={() => handleSort('momScore')}>
+                        파워랭킹
+                      </Styles.TableHeader>
+                      <Styles.TableHeader active={sortKey === 'momTop3Count'} onClick={() => handleSort('momTop3Count')}>
+                        TOP3
+                      </Styles.TableHeader>
+                      <Styles.TableHeader active={sortKey === 'momTop8Count'} onClick={() => handleSort('momTop8Count')}>
+                        TOP8
+                      </Styles.TableHeader>
+                      <Styles.TableHeader active={sortKey === 'personalPoints'} onClick={() => handleSort('personalPoints')}>
+                        승점
+                      </Styles.TableHeader>
                     </tr>
                   </thead>
                   <tbody>
@@ -479,8 +571,6 @@ const TOP = () => {
                             name={player.name}
                             style={{
                               width: '38px',
-                              // height: '30px',
-                              // borderRadius: '50%',
                               marginRight: '8px',
                               objectFit: 'cover',
                             }}
@@ -504,13 +594,13 @@ const TOP = () => {
               </Styles.FullRankingContainer>
             ) : (
               <Styles.NoDataMessage>
-                {fullRankingSearch.trim() ? '해당 선수를 찾을 수 없습니다.' : '해당 연도에는 기록하지 않았습니다.'}
+                {fullRankingSearch.trim() ? '해당 선수를 찾을 수 없습니다.' : '해당 연도에는 기록이 없습니다.'}
               </Styles.NoDataMessage>
             )}
           </Styles.FullRankingSection>
         </>
       ) : (
-        <Styles.NoDataMessage>해당 연도에는 기록하지 않았습니다.</Styles.NoDataMessage>
+        <Styles.NoDataMessage>해당 연도에는 기록이 없습니다.</Styles.NoDataMessage>
       )}
 
       {/* 선수 검색 팝업 */}
@@ -524,12 +614,9 @@ const TOP = () => {
                     name={playerStats.name}
                     style={{
                       width: '64px',
-                      // height: '64px',
-                      // borderRadius: '50%',
                       marginRight: '16px',
                       objectFit: 'cover',
                       border: '4px solid #fff',
-                      // boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
                     }}
                   />
                   <div>
@@ -540,21 +627,76 @@ const TOP = () => {
                 <Styles.CloseButton onClick={() => setShowPopup(false)}>×</Styles.CloseButton>
               </Styles.PopupHeader>
               <Styles.StatsContainerInner>
-                {/* 기존 통계 내용 그대로 유지 */}
                 <Styles.StatsColumn>
-                  <Styles.StatItem><Styles.StatLabel>출장수</Styles.StatLabel><Styles.StatValueWrapper><Styles.StatValue>{playerStats.matches.value} 경기</Styles.StatValue></Styles.StatValueWrapper><Styles.StatRank>순위: {playerStats.matches.rank}</Styles.StatRank></Styles.StatItem>
-                  <Styles.StatItem><Styles.StatLabel>득점</Styles.StatLabel><Styles.StatValueWrapper><Styles.StatValue>{playerStats.goals.value} 골</Styles.StatValue></Styles.StatValueWrapper><Styles.StatRank>순위: {playerStats.goals.rank}</Styles.StatRank></Styles.StatItem>
-                  <Styles.StatItem><Styles.StatLabel>도움</Styles.StatLabel><Styles.StatValueWrapper><Styles.StatValue>{playerStats.assists.value} 개</Styles.StatValue></Styles.StatValueWrapper><Styles.StatRank>순위: {playerStats.assists.rank}</Styles.StatRank></Styles.StatItem>
+                  <Styles.StatItem>
+                    <Styles.StatLabel>출장수</Styles.StatLabel>
+                    <Styles.StatValueWrapper>
+                      <Styles.StatValue>{playerStats.matches.value} 경기</Styles.StatValue>
+                    </Styles.StatValueWrapper>
+                    <Styles.StatRank>순위: {playerStats.matches.rank}</Styles.StatRank>
+                  </Styles.StatItem>
+                  <Styles.StatItem>
+                    <Styles.StatLabel>득점</Styles.StatLabel>
+                    <Styles.StatValueWrapper>
+                      <Styles.StatValue>{playerStats.goals.value} 골</Styles.StatValue>
+                    </Styles.StatValueWrapper>
+                    <Styles.StatRank>순위: {playerStats.goals.rank}</Styles.StatRank>
+                  </Styles.StatItem>
+                  <Styles.StatItem>
+                    <Styles.StatLabel>도움</Styles.StatLabel>
+                    <Styles.StatValueWrapper>
+                      <Styles.StatValue>{playerStats.assists.value} 개</Styles.StatValue>
+                    </Styles.StatValueWrapper>
+                    <Styles.StatRank>순위: {playerStats.assists.rank}</Styles.StatRank>
+                  </Styles.StatItem>
                 </Styles.StatsColumn>
+
                 <Styles.StatsColumn>
-                  <Styles.StatItem><Styles.StatLabel>공격포인트</Styles.StatLabel><Styles.StatValueWrapper><Styles.StatValue>{playerStats.attackPoints.value} P</Styles.StatValue></Styles.StatValueWrapper><Styles.StatRank>순위: {playerStats.attackPoints.rank}</Styles.StatRank></Styles.StatItem>
-                  <Styles.StatItem><Styles.StatLabel>클린시트</Styles.StatLabel><Styles.StatValueWrapper><Styles.StatValue>{playerStats.cleanSheets.value} 회</Styles.StatValue></Styles.StatValueWrapper><Styles.StatRank>순위: {playerStats.cleanSheets.rank}</Styles.StatRank></Styles.StatItem>
-                  <Styles.StatItem><Styles.StatLabel>파워랭킹</Styles.StatLabel><Styles.StatValueWrapper><Styles.StatValue>{playerStats.momScore.value} 점</Styles.StatValue></Styles.StatValueWrapper><Styles.StatRank>순위: {playerStats.momScore.rank}</Styles.StatRank></Styles.StatItem>
+                  <Styles.StatItem>
+                    <Styles.StatLabel>공격포인트</Styles.StatLabel>
+                    <Styles.StatValueWrapper>
+                      <Styles.StatValue>{playerStats.attackPoints.value} P</Styles.StatValue>
+                    </Styles.StatValueWrapper>
+                    <Styles.StatRank>순위: {playerStats.attackPoints.rank}</Styles.StatRank>
+                  </Styles.StatItem>
+                  <Styles.StatItem>
+                    <Styles.StatLabel>클린시트</Styles.StatLabel>
+                    <Styles.StatValueWrapper>
+                      <Styles.StatValue>{playerStats.cleanSheets.value} 회</Styles.StatValue>
+                    </Styles.StatValueWrapper>
+                    <Styles.StatRank>순위: {playerStats.cleanSheets.rank}</Styles.StatRank>
+                  </Styles.StatItem>
+                  <Styles.StatItem>
+                    <Styles.StatLabel>파워랭킹</Styles.StatLabel>
+                    <Styles.StatValueWrapper>
+                      <Styles.StatValue>{playerStats.momScore.value} 점</Styles.StatValue>
+                    </Styles.StatValueWrapper>
+                    <Styles.StatRank>순위: {playerStats.momScore.rank}</Styles.StatRank>
+                  </Styles.StatItem>
                 </Styles.StatsColumn>
+
                 <Styles.StatsColumn>
-                  <Styles.StatItem><Styles.StatLabel>TOP 3</Styles.StatLabel><Styles.StatValueWrapper><Styles.StatValue>{playerStats.momTop3Count.value} 회</Styles.StatValue></Styles.StatValueWrapper><Styles.StatRank>순위: {playerStats.momTop3Count.rank}</Styles.StatRank></Styles.StatItem>
-                  <Styles.StatItem><Styles.StatLabel>TOP 8</Styles.StatLabel><Styles.StatValueWrapper><Styles.StatValue>{playerStats.momTop8Count.value} 회</Styles.StatValue></Styles.StatValueWrapper><Styles.StatRank>순위: {playerStats.momTop8Count.rank}</Styles.StatRank></Styles.StatItem>
-                  <Styles.StatItem><Styles.StatLabel>개인승점</Styles.StatLabel><Styles.StatValueWrapper><Styles.StatValue>{playerStats.personalPoints.value} 점</Styles.StatValue></Styles.StatValueWrapper><Styles.StatRank>순위: {playerStats.personalPoints.rank}</Styles.StatRank></Styles.StatItem>
+                  <Styles.StatItem>
+                    <Styles.StatLabel>TOP 3</Styles.StatLabel>
+                    <Styles.StatValueWrapper>
+                      <Styles.StatValue>{playerStats.momTop3Count.value} 회</Styles.StatValue>
+                    </Styles.StatValueWrapper>
+                    <Styles.StatRank>순위: {playerStats.momTop3Count.rank}</Styles.StatRank>
+                  </Styles.StatItem>
+                  <Styles.StatItem>
+                    <Styles.StatLabel>TOP 8</Styles.StatLabel>
+                    <Styles.StatValueWrapper>
+                      <Styles.StatValue>{playerStats.momTop8Count.value} 회</Styles.StatValue>
+                    </Styles.StatValueWrapper>
+                    <Styles.StatRank>순위: {playerStats.momTop8Count.rank}</Styles.StatRank>
+                  </Styles.StatItem>
+                  <Styles.StatItem>
+                    <Styles.StatLabel>개인승점</Styles.StatLabel>
+                    <Styles.StatValueWrapper>
+                      <Styles.StatValue>{playerStats.personalPoints.value} 점</Styles.StatValue>
+                    </Styles.StatValueWrapper>
+                    <Styles.StatRank>순위: {playerStats.personalPoints.rank}</Styles.StatRank>
+                  </Styles.StatItem>
                 </Styles.StatsColumn>
               </Styles.StatsContainerInner>
               <Styles.PopupFooter>
@@ -570,7 +712,9 @@ const TOP = () => {
         <Styles.PopupOverlay onClick={() => setShowMorePopup(null)}>
           <Styles.TossPopup onClick={(e) => e.stopPropagation()}>
             <Styles.TossHeader>
-              <Styles.TossTitle>{showMorePopup.selectedCategory.title} {currentYear}시즌 상위 순위</Styles.TossTitle>
+              <Styles.TossTitle>
+                {showMorePopup.selectedCategory.title} {currentYear}시즌 상위 순위
+              </Styles.TossTitle>
               <Styles.TossCloseButton onClick={() => setShowMorePopup(null)}>×</Styles.TossCloseButton>
             </Styles.TossHeader>
             <Styles.CategoryButtonContainer>
@@ -588,7 +732,9 @@ const TOP = () => {
             </Styles.CategoryButtonContainer>
             <Styles.TossList>
               {showMorePopup.selectedCategory.players.map((player) => (
-                <Styles.TossListItem key={`${showMorePopup.selectedCategory.id}-${player.rank}-${player.name}`}>
+                <Styles.TossListItem
+                  key={`${showMorePopup.selectedCategory.id}-${player.rank}-${player.name}`}
+                >
                   <Styles.TossRankWrapper>
                     <Styles.TossRank isNumber={player.rank > 3}>
                       {player.rank === 1 && <Medal rank={1} />}
@@ -602,19 +748,21 @@ const TOP = () => {
                       name={player.name}
                       style={{
                         width: '44px',
-                        // height: '44px',
-                        // borderRadius: '50%',
                         marginRight: '12px',
                         objectFit: 'cover',
-                        // border: '2px solid #333',
                       }}
                     />
                     <div>
                       <Styles.TossPlayerName>{player.name}</Styles.TossPlayerName>
-                      {isPositionVisible && player.position && <Styles.TossPlayerPosition>{player.position}</Styles.TossPlayerPosition>}
+                      {isPositionVisible && player.position && (
+                        <Styles.TossPlayerPosition>{player.position}</Styles.TossPlayerPosition>
+                      )}
                     </div>
                   </Styles.TossPlayerInfo>
-                  <Styles.TossPlayerStat>{player.value}{showMorePopup.selectedCategory.unit}</Styles.TossPlayerStat>
+                  <Styles.TossPlayerStat>
+                    {player.value}
+                    {showMorePopup.selectedCategory.unit}
+                  </Styles.TossPlayerStat>
                 </Styles.TossListItem>
               ))}
             </Styles.TossList>

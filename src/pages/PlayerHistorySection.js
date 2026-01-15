@@ -9,6 +9,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 const PlayerHistorySection = () => {
   const { playerId } = useParams();
   const navigate = useNavigate();
+
   const [historyData, setHistoryData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -34,7 +35,13 @@ const PlayerHistorySection = () => {
     top8: 0
   });
 
-  const years = ['2022', '2023', '2024', '2025'];
+  const getCurrentSeason = () => {
+    const now = new Date();
+    return now.getFullYear().toString(); // 현재 2026
+  };
+
+  const currentSeason = getCurrentSeason();
+  const years = ['2022', '2023', '2024', '2025', currentSeason];
 
   const statOptions = [
     { value: 'goals', label: '득점', color: '#8884d8' },
@@ -59,81 +66,147 @@ const PlayerHistorySection = () => {
 
   const statRankingToCheck = ['goals', 'assists', 'cleanSheets', 'matches', 'momTop3Count', 'momTop8Count'];
 
-  const normalizeTeamName = (name) => {
-    return name ? name.trim().toLowerCase() : '';
-  };
-
-  // 로딩 퍼센트 애니메이션
   useEffect(() => {
     let interval;
     if (rankingDataLoading) {
       setLoadingPercent(0);
       interval = setInterval(() => {
-        setLoadingPercent((prev) => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            return 100;
-          }
-          return prev + 1;
-        });
+        setLoadingPercent((prev) => (prev >= 100 ? 100 : prev + 1));
       }, 50);
     }
     return () => clearInterval(interval);
   }, [rankingDataLoading]);
 
-  // 종합 통계 계산
   useEffect(() => {
-    if (!loading && historyData.length > 0) {
-      const totals = historyData.reduce((acc, record) => ({
-        goals: acc.goals + (record.goals || 0),
-        assists: acc.assists + (record.assists || 0),
-        matches: acc.matches + (record.matches || 0),
-        cleanSheets: acc.cleanSheets + (record.cleanSheets || 0),
-        attackPoints: acc.attackPoints + (record.goals || 0) + (record.assists || 0),
-        top3: acc.top3 + (record.momTop3Count || 0),
-        top8: acc.top8 + (record.momTop8Count || 0)
-      }), {
-        goals: 0,
-        assists: 0,
-        matches: 0,
-        cleanSheets: 0,
-        attackPoints: 0,
-        top3: 0,
-        top8: 0
-      });
+    if (historyData.length > 0) {
+      const totals = historyData.reduce(
+        (acc, record) => ({
+          goals: acc.goals + (record.goals || 0),
+          assists: acc.assists + (record.assists || 0),
+          matches: acc.matches + (record.matches || 0),
+          cleanSheets: acc.cleanSheets + (record.cleanSheets || 0),
+          attackPoints: acc.attackPoints + ((record.goals || 0) + (record.assists || 0)),
+          top3: acc.top3 + (record.momTop3Count || 0),
+          top8: acc.top8 + (record.momTop8Count || 0)
+        }),
+        { goals: 0, assists: 0, matches: 0, cleanSheets: 0, attackPoints: 0, top3: 0, top8: 0 }
+      );
       setTotalStats(totals);
     }
-  }, [historyData, loading]);
+  }, [historyData]);
 
-  // 연도별 통계 랭킹 조회
+  useEffect(() => {
+    const fetchHistory = async () => {
+      setLoading(true);
+      const data = [];
+
+      try {
+        const playerRef = doc(db, 'players', playerId);
+        const playerDoc = await getDoc(playerRef);
+        const currentPlayerData = playerDoc.exists() ? playerDoc.data() : {};
+
+        for (const year of years) {
+          if (year === currentSeason) {
+            // 2026년(현재 시즌) → players 컬렉션 실시간 데이터
+            data.push({
+              year,
+              goals: currentPlayerData.goals || 0,
+              assists: currentPlayerData.assists || 0,
+              cleanSheets: currentPlayerData.cleanSheets || 0,
+              matches: currentPlayerData.matches || 0,
+              win: currentPlayerData.win || 0,
+              draw: currentPlayerData.draw || 0,
+              lose: currentPlayerData.lose || 0,
+              winRate: Math.round(currentPlayerData.winRate || 0),
+              personalPoints: currentPlayerData.personalPoints || 0,
+              momScore: currentPlayerData.momScore || 0,
+              momTop3Count: currentPlayerData.momTop3Count || 0,
+              momTop8Count: currentPlayerData.momTop8Count || 0
+            });
+          } else {
+            // 2025년 포함 모든 과거 연도 → history 서브컬렉션
+            const historyRef = doc(db, 'players', playerId, 'history', year);
+            const historyDoc = await getDoc(historyRef);
+
+            if (historyDoc.exists()) {
+              const hData = historyDoc.data();
+              data.push({
+                year,
+                goals: hData.goals || 0,
+                assists: hData.assists || 0,
+                cleanSheets: hData.cleanSheets || 0,
+                matches: hData.matches || 0,
+                win: hData.win || 0,
+                draw: hData.draw || 0,
+                lose: hData.lose || 0,
+                winRate: Math.round(hData.winRate || 0),
+                personalPoints: hData.personalPoints || 0,
+                momScore: hData.momScore || 0,
+                momTop3Count: hData.momTop3Count || 0,
+                momTop8Count: hData.momTop8Count || 0
+              });
+            } else {
+              data.push({
+                year,
+                goals: 0,
+                assists: 0,
+                cleanSheets: 0,
+                matches: 0,
+                win: 0,
+                draw: 0,
+                lose: 0,
+                winRate: 0,
+                personalPoints: 0,
+                momScore: 0,
+                momTop3Count: 0,
+                momTop8Count: 0
+              });
+            }
+          }
+        }
+
+        const sorted = data.sort((a, b) => parseInt(a.year) - parseInt(b.year));
+        setHistoryData(sorted);
+      } catch (err) {
+        console.error('Error fetching history:', err);
+        setError('기록을 가져오는 중 오류가 발생했습니다.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchHistory();
+  }, [playerId]);
+
   useEffect(() => {
     const fetchRankingData = async () => {
       setRankingDataLoading(true);
       const rankData = {};
-      
+
       for (const year of years) {
         rankData[year] = {};
-        
+
         try {
-          if (year === '2025') {
+          if (year === currentSeason) {
+            // 2026년(현재 시즌) → players 컬렉션 실시간 랭킹
             const playersRef = collection(db, 'players');
             const playersSnapshot = await getDocs(playersRef);
-            
+
             statRankingToCheck.forEach(stat => {
               const playerStats = [];
-              
+
               playersSnapshot.forEach(doc => {
                 const playerData = doc.data();
-                if (playerData[stat] > 0) {
+                if ((playerData[stat] || 0) > 0) {
                   playerStats.push({
                     id: doc.id,
                     value: playerData[stat] || 0
                   });
                 }
               });
-              
+
               playerStats.sort((a, b) => b.value - a.value);
-              
+
               const ranks = [];
               let currentRank = 1;
               let currentValue = null;
@@ -156,97 +229,43 @@ const PlayerHistorySection = () => {
 
               const top3 = ranks.filter(item => item.rank <= 3);
               const playerRank = ranks.find(item => item.id === playerId)?.rank || null;
-              
-              rankData[year][stat] = {
-                top3,
-                playerRank
-              };
+
+              rankData[year][stat] = { top3, playerRank };
             });
           } else {
-            const yearPlayersRef = collection(db, 'yearlyStats', year, 'players');
-            const yearPlayersSnapshot = await getDocs(yearPlayersRef);
-            
-            if (yearPlayersSnapshot.empty) {
-              const playersRef = collection(db, 'players');
-              const playersSnapshot = await getDocs(playersRef);
-              
-              const yearlyPlayerStats = [];
-              
-              for (const playerDoc of playersSnapshot.docs) {
-                const historyRef = doc(db, 'players', playerDoc.id, 'history', year);
-                const historyDoc = await getDoc(historyRef);
-                
-                if (historyDoc.exists()) {
-                  const historyData = historyDoc.data();
-                  if (historyData.matches > 0) {
-                    statRankingToCheck.forEach(stat => {
-                      if (!yearlyPlayerStats[stat]) yearlyPlayerStats[stat] = [];
-                      yearlyPlayerStats[stat].push({
-                        id: playerDoc.id,
-                        value: historyData[stat] || 0
-                      });
-                    });
-                  }
-                }
-              }
-              
-              statRankingToCheck.forEach(stat => {
-                if (yearlyPlayerStats[stat]) {
-                  yearlyPlayerStats[stat].sort((a, b) => b.value - a.value);
-                  
-                  const ranks = [];
-                  let currentRank = 1;
-                  let currentValue = null;
-                  let playersAtCurrentValue = 0;
+            // 2025년 포함 과거 연도 → history 서브컬렉션
+            const yearlyData = [];
+            const playersRef = collection(db, 'players');
+            const playersSnapshot = await getDocs(playersRef);
 
-                  yearlyPlayerStats[stat].forEach((player, index) => {
-                    if (player.value !== currentValue) {
-                      currentRank += playersAtCurrentValue;
-                      currentValue = player.value;
-                      playersAtCurrentValue = 1;
-                    } else {
-                      playersAtCurrentValue++;
-                    }
-                    ranks.push({
-                      id: player.id,
-                      value: player.value,
-                      rank: currentRank
+            for (const playerDoc of playersSnapshot.docs) {
+              const historyRef = doc(db, 'players', playerDoc.id, 'history', year);
+              const historyDoc = await getDoc(historyRef);
+
+              if (historyDoc.exists()) {
+                const historyData = historyDoc.data();
+                if ((historyData.matches || 0) > 0) {
+                  statRankingToCheck.forEach(stat => {
+                    if (!yearlyData[stat]) yearlyData[stat] = [];
+                    yearlyData[stat].push({
+                      id: playerDoc.id,
+                      value: historyData[stat] || 0
                     });
                   });
-
-                  const top3 = ranks.filter(item => item.rank <= 3);
-                  const playerRank = ranks.find(item => item.id === playerId)?.rank || null;
-                  
-                  rankData[year][stat] = {
-                    top3,
-                    playerRank
-                  };
-                } else {
-                  rankData[year][stat] = { top3: [], playerRank: null };
                 }
-              });
-            } else {
-              statRankingToCheck.forEach(stat => {
-                const playerStats = [];
-                
-                yearPlayersSnapshot.forEach(doc => {
-                  const playerData = doc.data();
-                  if (playerData[stat] > 0) {
-                    playerStats.push({
-                      id: doc.id,
-                      value: playerData[stat] || 0
-                    });
-                  }
-                });
-                
-                playerStats.sort((a, b) => b.value - a.value);
-                
+              }
+            }
+
+            statRankingToCheck.forEach(stat => {
+              if (yearlyData[stat]) {
+                yearlyData[stat].sort((a, b) => b.value - a.value);
+
                 const ranks = [];
                 let currentRank = 1;
                 let currentValue = null;
                 let playersAtCurrentValue = 0;
 
-                playerStats.forEach((player, index) => {
+                yearlyData[stat].forEach((player, index) => {
                   if (player.value !== currentValue) {
                     currentRank += playersAtCurrentValue;
                     currentValue = player.value;
@@ -263,13 +282,12 @@ const PlayerHistorySection = () => {
 
                 const top3 = ranks.filter(item => item.rank <= 3);
                 const playerRank = ranks.find(item => item.id === playerId)?.rank || null;
-                
-                rankData[year][stat] = {
-                  top3,
-                  playerRank
-                };
-              });
-            }
+
+                rankData[year][stat] = { top3, playerRank };
+              } else {
+                rankData[year][stat] = { top3: [], playerRank: null };
+              }
+            });
           }
         } catch (err) {
           console.error(`Error fetching ranking data for ${year}:`, err);
@@ -278,62 +296,56 @@ const PlayerHistorySection = () => {
           });
         }
       }
-      
+
       setRankingData(rankData);
       setRankingDataLoading(false);
     };
-    
+
     if (!loading && historyData.length > 0) {
       fetchRankingData();
     }
   }, [historyData, loading, playerId]);
 
-  // 총 기록 랭킹 조회
   useEffect(() => {
     const fetchTotalRankingData = async () => {
       const totalRankData = {};
       const statsToCheck = ['goals', 'assists', 'matches', 'cleanSheets', 'attackPoints', 'top3', 'top8'];
-      
+
       try {
         const playersRef = collection(db, 'players');
         const playersSnapshot = await getDocs(playersRef);
         const playerTotals = {};
 
         for (const playerDoc of playersSnapshot.docs) {
-          const playerId = playerDoc.id;
-          playerTotals[playerId] = { 
-            goals: 0, 
-            assists: 0, 
-            matches: 0, 
-            cleanSheets: 0, 
-            attackPoints: 0, 
-            top3: 0, 
-            top8: 0 
+          const pid = playerDoc.id;
+          playerTotals[pid] = {
+            goals: 0, assists: 0, matches: 0, cleanSheets: 0,
+            attackPoints: 0, top3: 0, top8: 0
           };
 
-          for (const year of years.filter(y => y !== '2025')) {
-            const historyRef = doc(db, 'players', playerId, 'history', year);
+          const playerData = playerDoc.data();
+          playerTotals[pid].goals += playerData.goals || 0;
+          playerTotals[pid].assists += playerData.assists || 0;
+          playerTotals[pid].matches += playerData.matches || 0;
+          playerTotals[pid].cleanSheets += playerData.cleanSheets || 0;
+          playerTotals[pid].attackPoints += (playerData.goals || 0) + (playerData.assists || 0);
+          playerTotals[pid].top3 += playerData.momTop3Count || 0;
+          playerTotals[pid].top8 += playerData.momTop8Count || 0;
+
+          for (const year of years.filter(y => y !== currentSeason)) {
+            const historyRef = doc(db, 'players', pid, 'history', year);
             const historyDoc = await getDoc(historyRef);
             if (historyDoc.exists()) {
               const data = historyDoc.data();
-              playerTotals[playerId].goals += data.goals || 0;
-              playerTotals[playerId].assists += data.assists || 0;
-              playerTotals[playerId].matches += data.matches || 0;
-              playerTotals[playerId].cleanSheets += data.cleanSheets || 0;
-              playerTotals[playerId].attackPoints += (data.goals || 0) + (data.assists || 0);
-              playerTotals[playerId].top3 += data.momTop3Count || 0;
-              playerTotals[playerId].top8 += data.momTop8Count || 0;
+              playerTotals[pid].goals += data.goals || 0;
+              playerTotals[pid].assists += data.assists || 0;
+              playerTotals[pid].matches += data.matches || 0;
+              playerTotals[pid].cleanSheets += data.cleanSheets || 0;
+              playerTotals[pid].attackPoints += (data.goals || 0) + (data.assists || 0);
+              playerTotals[pid].top3 += data.momTop3Count || 0;
+              playerTotals[pid].top8 += data.momTop8Count || 0;
             }
           }
-
-          const playerData = playerDoc.data();
-          playerTotals[playerId].goals += playerData.goals || 0;
-          playerTotals[playerId].assists += playerData.assists || 0;
-          playerTotals[playerId].matches += playerData.matches || 0;
-          playerTotals[playerId].cleanSheets += playerData.cleanSheets || 0;
-          playerTotals[playerId].attackPoints += (playerData.goals || 0) + (playerData.assists || 0);
-          playerTotals[playerId].top3 += playerData.momTop3Count || 0;
-          playerTotals[playerId].top8 += playerData.momTop8Count || 0;
         }
 
         statsToCheck.forEach(stat => {
@@ -369,19 +381,12 @@ const PlayerHistorySection = () => {
           const top3 = ranks.filter(item => item.rank <= 3);
           const playerRank = ranks.find(item => item.id === playerId)?.rank || null;
 
-          totalRankData[stat] = {
-            top3,
-            playerRank
-          };
+          totalRankData[stat] = { top3, playerRank };
         });
 
         setTotalRankingData(totalRankData);
       } catch (err) {
         console.error('Error fetching total ranking data:', err);
-        statsToCheck.forEach(stat => {
-          totalRankData[stat] = { top3: [], playerRank: null };
-        });
-        setTotalRankingData(totalRankData);
       }
     };
 
@@ -390,100 +395,6 @@ const PlayerHistorySection = () => {
     }
   }, [historyData, loading, playerId]);
 
-  // 연도별 데이터 조회
-  useEffect(() => {
-    const fetchHistory = async () => {
-      try {
-        const data = [];
-        
-        for (const year of years.filter(y => y !== '2025')) {
-          const historyRef = doc(db, 'players', playerId, 'history', year);
-          const historyDoc = await getDoc(historyRef);
-
-          if (historyDoc.exists()) {
-            data.push({
-              year,
-              ...historyDoc.data(),
-              momTop3Count: historyDoc.data().momTop3Count || 0,
-              momTop8Count: historyDoc.data().momTop8Count || 0
-            });
-          } else {
-            data.push({
-              year,
-              goals: 0,
-              assists: 0,
-              cleanSheets: 0,
-              matches: 0,
-              win: 0,
-              draw: 0,
-              lose: 0,
-              winRate: 0,
-              personalPoints: 0,
-              momScore: 0,
-              momTop3Count: 0,
-              momTop8Count: 0
-            });
-          }
-        }
-        
-        const playerRef = doc(db, 'players', playerId);
-        const playerDoc = await getDoc(playerRef);
-        
-        if (playerDoc.exists()) {
-          const currentData = playerDoc.data();
-          data.push({
-            year: '2025',
-            goals: currentData.goals || 0,
-            assists: currentData.assists || 0,
-            cleanSheets: currentData.cleanSheets || 0,
-            matches: currentData.matches || 0,
-            win: currentData.win || 0,
-            draw: currentData.draw || 0,
-            lose: currentData.lose || 0,
-            winRate: currentData.winRate || 0,
-            personalPoints: currentData.personalPoints || 0,
-            momScore: currentData.momScore || 0,
-            momTop3Count: currentData.momTop3Count || 0,
-            momTop8Count: currentData.momTop8Count || 0
-          });
-        } else {
-          data.push({
-            year: '2025',
-            goals: 0,
-            assists: 0,
-            cleanSheets: 0,
-            matches: 0,
-            win: 0,
-            draw: 0,
-            lose: 0,
-            winRate: 0,
-            personalPoints: 0,
-            momScore: 0,
-            momTop3Count: 0,
-            momTop8Count: 0
-          });
-        }
-
-        const sorted = data
-          .sort((a, b) => parseInt(a.year) - parseInt(b.year))
-          .map(record => ({
-            ...record,
-            winRate: Math.round(record.winRate),
-          }));
-
-        setHistoryData(sorted);
-        setLoading(false);
-      } catch (err) {
-        console.error('Error fetching history:', err);
-        setError('기록을 가져오는 중 오류가 발생했습니다.');
-        setLoading(false);
-      }
-    };
-    
-    fetchHistory();
-  }, [playerId]);
-
-  // 최고의 파트너 조회
   useEffect(() => {
     const fetchBestPartners = async () => {
       try {
@@ -496,8 +407,8 @@ const PlayerHistorySection = () => {
         const teamMateCounts = {};
         const cleanSheetCounts = {};
 
-        const defensivePositions = ['CB1', 'CB2', 'LB', 'RB', 'LWB', 'RWB'];
         let isDefender = false;
+        const defensivePositions = ['CB1', 'CB2', 'LB', 'RB', 'LWB', 'RWB'];
 
         matchesSnapshot.forEach(doc => {
           const match = doc.data();
@@ -517,7 +428,7 @@ const PlayerHistorySection = () => {
           const match = doc.data();
           if (match.date && new Date(match.date).getFullYear() === 2025) {
             match.quarters.forEach(quarter => {
-              const playerTeam = quarter.teams.find(team => 
+              const playerTeam = quarter.teams.find(team =>
                 team.players.some(p => p.name.toLowerCase() === playerId.toLowerCase())
               );
               if (playerTeam) {
@@ -528,31 +439,27 @@ const PlayerHistorySection = () => {
                 });
               }
 
-              if (isDefender) {
-                const playerTeam = quarter.teams.find(team => 
-                  team.players.some(p => p.name.toLowerCase() === playerId.toLowerCase())
-                );
-                if (playerTeam) {
-                  const opponentTeams = quarter.teams.filter(t => t.name !== playerTeam.name);
-                  const opponentGoals = quarter.goalAssistPairs.filter(p => 
-                    opponentTeams.some(t => normalizeTeamName(p.goal.team) === normalizeTeamName(t.name))
-                  ).length;
-                  if (opponentGoals === 0) {
-                    playerTeam.players.forEach(player => {
-                      if (player.name.toLowerCase() !== playerId.toLowerCase()) {
-                        cleanSheetCounts[player.name] = (cleanSheetCounts[player.name] || 0) + 1;
-                      }
-                    });
-                  }
+              if (isDefender && playerTeam) {
+                const opponentTeams = quarter.teams.filter(t => t.name !== playerTeam.name);
+                const opponentGoals = quarter.goalAssistPairs.filter(p =>
+                  opponentTeams.some(t => (p.goal?.team || '').trim().toLowerCase() === (t.name || '').trim().toLowerCase())
+                ).length;
+
+                if (opponentGoals === 0) {
+                  playerTeam.players.forEach(player => {
+                    if (player.name.toLowerCase() !== playerId.toLowerCase()) {
+                      cleanSheetCounts[player.name] = (cleanSheetCounts[player.name] || 0) + 1;
+                    }
+                  });
                 }
               }
 
               (quarter.goalAssistPairs || []).forEach(pair => {
-                if (pair.assist.player?.toLowerCase() === playerId.toLowerCase() && pair.goal.player) {
+                if (pair.assist?.player?.toLowerCase() === playerId.toLowerCase() && pair.goal?.player) {
                   const goalPlayer = pair.goal.player;
                   givenCounts[goalPlayer] = (givenCounts[goalPlayer] || 0) + 1;
                 }
-                if (pair.goal.player?.toLowerCase() === playerId.toLowerCase() && pair.assist.player) {
+                if (pair.goal?.player?.toLowerCase() === playerId.toLowerCase() && pair.assist?.player) {
                   const assistPlayer = pair.assist.player;
                   receivedCounts[assistPlayer] = (receivedCounts[assistPlayer] || 0) + 1;
                 }
@@ -561,16 +468,16 @@ const PlayerHistorySection = () => {
           }
         });
 
-        const givenMax = Object.entries(givenCounts).reduce((max, [name, count]) => 
+        const givenMax = Object.entries(givenCounts).reduce((max, [name, count]) =>
           count > max.count ? { name, count } : max, { name: '', count: 0 });
 
-        const receivedMax = Object.entries(receivedCounts).reduce((max, [name, count]) => 
+        const receivedMax = Object.entries(receivedCounts).reduce((max, [name, count]) =>
           count > max.count ? { name, count } : max, { name: '', count: 0 });
 
-        const teamMateMax = Object.entries(teamMateCounts).reduce((max, [name, count]) => 
+        const teamMateMax = Object.entries(teamMateCounts).reduce((max, [name, count]) =>
           count > max.count ? { name, count } : max, { name: '', count: 0 });
 
-        const cleanSheetMax = Object.entries(cleanSheetCounts).reduce((max, [name, count]) => 
+        const cleanSheetMax = Object.entries(cleanSheetCounts).reduce((max, [name, count]) =>
           count > max.count ? { name, count } : max, { name: '', count: 0 });
 
         setBestPartners({
@@ -581,12 +488,6 @@ const PlayerHistorySection = () => {
         });
       } catch (err) {
         console.error('Error fetching best partners:', err);
-        setBestPartners({
-          given: { name: '', count: 0 },
-          received: { name: '', count: 0 },
-          teamMate: { name: '', count: 0 },
-          cleanSheet: { name: '', count: 0 }
-        });
       }
     };
 
@@ -595,173 +496,14 @@ const PlayerHistorySection = () => {
     }
   }, [loading, historyData, playerId]);
 
-  const toggleGraphs = () => {
-    setShowGraphs(!showGraphs);
-  };
+  const toggleGraphs = () => setShowGraphs(!showGraphs);
 
   const getMaxValue = (statKey) => {
     const max = Math.max(...historyData.map(item => item[statKey] || 0));
     return max === 0 ? 10 : Math.ceil(max * 1.2);
   };
 
-  const renderRankingBadge = (year, stat, value) => {
-    if (!rankingData[year] || !rankingData[year][stat]) {
-      return null;
-    }
-    
-    const rankInfo = rankingData[year][stat];
-    const statLabels = {
-      goals: '득점',
-      assists: '어시스트',
-      cleanSheets: '클린시트',
-      matches: '출장',
-      personalPoints: '개인승점',
-      momTop3Count: 'MOM TOP 3',
-      momTop8Count: 'MOM TOP 8'
-    };
-    
-    const playerItem = rankInfo.top3.find(item => item.id === playerId);
-    if (!playerItem || playerItem.rank > 3 || value === 0) return null;
-    
-    let icon, color, text;
-    
-    switch(playerItem.rank) {
-      case 1:
-        icon = <FaTrophy className="trophy-icon" style={{ color: 'gold', marginRight: '4px' }} />;
-        color = 'gold';
-        text = `${year}년 ${statLabels[stat]} ${playerItem.rank}위`;
-        break;
-      case 2:
-        icon = <FaMedal style={{ color: 'silver', marginRight: '4px' }} />;
-        color = 'silver';
-        text = `${year}년 ${statLabels[stat]} ${playerItem.rank}위`;
-        break;
-      case 3:
-        icon = <FaAward style={{ color: '#cd7f32', marginRight: '4px' }} />;
-        color = '#cd7f32';
-        text = `${year}년 ${statLabels[stat]} ${playerItem.rank}위`;
-        break;
-      default:
-        return null;
-    }
-    
-    return (
-      <div style={{ 
-        display: 'flex',
-        alignItems: 'center',
-        fontSize: '12px',
-        fontWeight: 'bold',
-        color: color,
-        marginTop: '4px'
-      }}>
-        {icon} {text}
-      </div>
-    );
-  };
-
-  const renderTitles = (stat) => {
-    if (!rankingData || stat === 'attackPoints') return null;
-    
-    const titles = years
-      .filter(year => {
-        if (!rankingData[year] || !rankingData[year][stat]) return false;
-        const playerItem = rankingData[year][stat].top3.find(item => item.id === playerId);
-        return playerItem && playerItem.rank === 1 && playerItem.value > 0;
-      })
-      .map(year => {
-        const statLabels = {
-          goals: '득점',
-          assists: '어시스트',
-          cleanSheets: '클린시트',
-          matches: '출장',
-          momTop3Count: 'MOM TOP 3',
-          momTop8Count: 'MOM TOP 8'
-        };
-        return `${year}년 ${statLabels[stat]} 1위`;
-      });
-
-    return titles.length > 0 ? (
-      <div style={{
-        fontSize: '12px',
-        fontWeight: 'bold',
-        color: 'gold',
-        marginTop: '4px',
-        textAlign: 'center'
-      }}>
-        {titles.join(', ')}
-      </div>
-    ) : null;
-  };
-
-  const renderTotalRank = (stat) => {
-    if (!totalRankingData[stat]) return null;
-    
-    const rankInfo = totalRankingData[stat];
-    const playerItem = rankInfo.top3.find(item => item.id === playerId);
-    
-    if (!playerItem || playerItem.rank > 3) return null;
-    
-    const statLabels = {
-      goals: '득점',
-      assists: '어시스트',
-      matches: '출장수',
-      cleanSheets: '클린시트',
-      attackPoints: '공격포인트',
-      top3: 'MOM TOP 3',
-      top8: 'MOM TOP 8'
-    };
-    
-    let icon, color, text;
-    
-    switch(playerItem.rank) {
-      case 1:
-        icon = <FaTrophy className="trophy-icon" style={{ color: 'gold', marginRight: '4px' }} />;
-        color = 'gold';
-        text = `총 ${statLabels[stat]} ${playerItem.rank}위`;
-        break;
-      case 2:
-        icon = <FaMedal style={{ color: 'silver', marginRight: '4px' }} />;
-        color = 'silver';
-        text = `총 ${statLabels[stat]} ${playerItem.rank}위`;
-        break;
-      case 3:
-        icon = <FaAward style={{ color: '#cd7f32', marginRight: '4px' }} />;
-        color = '#cd7f32';
-        text = `총 ${statLabels[stat]} ${playerItem.rank}위`;
-        break;
-      default:
-        return null;
-    }
-    
-    return (
-      <div style={{
-        fontSize: '12px',
-        fontWeight: 'bold',
-        color,
-        marginTop: '4px',
-        textAlign: 'center'
-      }}>
-        {icon} {text}
-      </div>
-    );
-  };
-
-  const renderLegendBadge = (value) => {
-    if (value >= 100 && value % 50 === 0) {
-      return (
-        <div style={{
-          fontSize: '12px',
-          fontWeight: 'bold',
-          color: 'gold',
-          marginTop: '4px',
-          textAlign: 'center'
-        }}>
-          레전드
-        </div>
-      );
-    }
-    return null;
-  };
+  const normalizeTeamName = (name) => name ? name.trim().toLowerCase() : '';
 
   if (loading) {
     return (
@@ -780,7 +522,7 @@ const PlayerHistorySection = () => {
       <PHS.Container>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: '20px' }}>
           <PHS.Button onClick={() => navigate('/total')} style={{ marginRight: '10px' }}>
-            <FaArrowLeft /> 
+            <FaArrowLeft />
           </PHS.Button>
           <h2>{playerId} 연도별 기록</h2>
         </div>
@@ -805,48 +547,31 @@ const PlayerHistorySection = () => {
           </thead>
           <tbody>
             {[...historyData].reverse().map((record) => (
-              <PHS.HistoryTableRow 
+              <PHS.HistoryTableRow
                 key={record.year}
-                style={record.year === '2025' ? { backgroundColor: 'rgba(66, 134, 244, 0.1)' } : {}}
+                style={
+                  record.year === currentSeason
+                    ? { backgroundColor: 'rgba(66, 134, 244, 0.1)' }
+                    : {}
+                }
               >
                 <PHS.HistoryTableCell>
-                  {record.year === '2025' ? record.year + ' (현재)' : record.year}
+                  {record.year === currentSeason
+                    ? `${record.year} (현재)`
+                    : record.year}
                 </PHS.HistoryTableCell>
-                <PHS.HistoryTableCell>
-                  {record.goals}
-                  {renderRankingBadge(record.year, 'goals', record.goals)}
-                </PHS.HistoryTableCell>
-                <PHS.HistoryTableCell>
-                  {record.assists}
-                  {renderRankingBadge(record.year, 'assists', record.assists)}
-                </PHS.HistoryTableCell>
-                <PHS.HistoryTableCell>
-                  {record.cleanSheets}
-                  {renderRankingBadge(record.year, 'cleanSheets', record.cleanSheets)}
-                </PHS.HistoryTableCell>
-                <PHS.HistoryTableCell>
-                  {record.matches}
-                  {renderRankingBadge(record.year, 'matches', record.matches)}
-                </PHS.HistoryTableCell>
+                <PHS.HistoryTableCell>{record.goals}</PHS.HistoryTableCell>
+                <PHS.HistoryTableCell>{record.assists}</PHS.HistoryTableCell>
+                <PHS.HistoryTableCell>{record.cleanSheets}</PHS.HistoryTableCell>
+                <PHS.HistoryTableCell>{record.matches}</PHS.HistoryTableCell>
                 <PHS.HistoryTableCell>
                   {record.win}/{record.draw}/{record.lose}
                 </PHS.HistoryTableCell>
-                <PHS.HistoryTableCell>
-                  {record.winRate}%
-                </PHS.HistoryTableCell>
-                <PHS.HistoryTableCell>
-                  {record.personalPoints}
-                  {renderRankingBadge(record.year, 'personalPoints', record.personalPoints)}
-                </PHS.HistoryTableCell>
+                <PHS.HistoryTableCell>{record.winRate}%</PHS.HistoryTableCell>
+                <PHS.HistoryTableCell>{record.personalPoints}</PHS.HistoryTableCell>
                 <PHS.HistoryTableCell>{record.momScore}</PHS.HistoryTableCell>
-                <PHS.HistoryTableCell>
-                  {record.momTop3Count}
-                  {renderRankingBadge(record.year, 'momTop3Count', record.momTop3Count)}
-                </PHS.HistoryTableCell>
-                <PHS.HistoryTableCell>
-                  {record.momTop8Count}
-                  {renderRankingBadge(record.year, 'momTop8Count', record.momTop8Count)}
-                </PHS.HistoryTableCell>
+                <PHS.HistoryTableCell>{record.momTop3Count}</PHS.HistoryTableCell>
+                <PHS.HistoryTableCell>{record.momTop8Count}</PHS.HistoryTableCell>
               </PHS.HistoryTableRow>
             ))}
           </tbody>
@@ -859,7 +584,7 @@ const PlayerHistorySection = () => {
         ) : (
           <>
             <PHS.RankingSummary>
-              <PHS.SectionTitle>🏆수상 기록🏆</PHS.SectionTitle>
+              <PHS.SectionTitle>🏆 수상 기록 🏆</PHS.SectionTitle>
               {rankingDataLoading ? (
                 <div style={{
                   display: 'flex',
@@ -895,8 +620,14 @@ const PlayerHistorySection = () => {
                   <p>발롱도르에서 트로피 가져오는 중... {loadingPercent}%</p>
                 </div>
               ) : (
-                (() => {
-                  const hasAwards = years.some(year => {
+                <div style={{
+                  display: 'flex',
+                  gap: '10px',
+                  justifyContent: 'center',
+                  flexWrap: 'wrap',
+                  marginLeft: '-35px'
+                }}>
+                  {years.some(year => {
                     if (!rankingData[year]) return false;
                     return statRankingToCheck.some(stat => {
                       const rankInfo = rankingData[year][stat];
@@ -906,117 +637,94 @@ const PlayerHistorySection = () => {
                       }
                       return false;
                     });
-                  });
+                  }) ? (
+                    years
+                      .filter(year => {
+                        if (!rankingData[year]) return false;
+                        return statRankingToCheck.some(stat => {
+                          const rankInfo = rankingData[year][stat];
+                          if (rankInfo && rankInfo.top3) {
+                            const playerItem = rankInfo.top3.find(item => item.id === playerId);
+                            return playerItem && playerItem.rank <= 3 && playerItem.value > 0;
+                          }
+                          return false;
+                        });
+                      })
+                      .map(year => (
+                        <div key={year} style={{
+                          backgroundColor: '#1a1a1a',
+                          borderRadius: '8px',
+                          padding: '12px',
+                          width: '200px',
+                          flexShrink: 0
+                        }}>
+                          <h4 style={{
+                            margin: '0 0 8px 0',
+                            borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+                            paddingBottom: '4px',
+                            fontSize: '16px',
+                            color: '#ffffff'
+                          }}>
+                            {year}년 수상 기록
+                          </h4>
+                          <div>
+                            {statRankingToCheck.map((stat, index) => {
+                              if (!rankingData[year]?.[stat]) return null;
+                              const playerItem = rankingData[year][stat].top3.find(item => item.id === playerId);
+                              if (!playerItem || playerItem.rank > 3 || playerItem.value <= 0) return null;
 
-                  return (
-                  <div
-  style={{
-    display: 'flex',
-    gap: '10px',
-    justifyContent: 'center',
-    flexWrap: 'wrap',
-    /* 전체를 왼쪽으로 10px 당겨줍니다 */
-    marginLeft: '-35px',
-    /* 모바일 기기(폭 ≤ 640px)에서만 덜 당기고 싶다면 미디어쿼리를 쓸 수는 없으니, 
-       대신 JS로 화면 너비를 감지해서 값만 다르게 줄 수도 있습니다. */
-  }}
->
-                      {hasAwards ? (
-                        years
-                          .filter(year => {
-                            if (!rankingData[year]) return false;
-                            return statRankingToCheck.some(stat => {
-                              const rankInfo = rankingData[year][stat];
-                              if (rankInfo && rankInfo.top3) {
-                                const playerItem = rankInfo.top3.find(item => item.id === playerId);
-                                return playerItem && playerItem.rank <= 3 && playerItem.value > 0;
+                              const statLabels = {
+                                goals: '득점',
+                                assists: '어시스트',
+                                cleanSheets: '클린시트',
+                                matches: '출장',
+                                momTop3Count: 'MOM TOP 3',
+                                momTop8Count: 'MOM TOP 8'
+                              };
+
+                              let icon, color, text;
+                              switch (playerItem.rank) {
+                                case 1:
+                                  icon = <FaTrophy style={{ color: 'gold' }} />;
+                                  color = 'gold';
+                                  text = `${statLabels[stat]} ${playerItem.rank}위 (${playerItem.value})`;
+                                  break;
+                                case 2:
+                                  icon = <FaMedal style={{ color: 'silver' }} />;
+                                  color = 'silver';
+                                  text = `${statLabels[stat]} ${playerItem.rank}위 (${playerItem.value})`;
+                                  break;
+                                case 3:
+                                  icon = <FaAward style={{ color: '#cd7f32' }} />;
+                                  color = '#cd7f32';
+                                  text = `${statLabels[stat]} ${playerItem.rank}위 (${playerItem.value})`;
+                                  break;
+                                default:
+                                  return null;
                               }
-                              return false;
-                            });
-                          })
-                          .map(year => (
-                            <div key={year} style={{
-                              backgroundColor: '#1a1a1a',
-                              borderRadius: '8px',
-                              padding: '12px',
-                              width: '200px',
-                              flexShrink: 0
-                            }}>
-                              <h4 style={{
-                                margin: '0 0 8px 0',
-                                borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
-                                paddingBottom: '4px',
-                                fontSize: '16px',
-                                color: '#ffffff'
-                              }}>
-                                {year}년 수상 기록
 
-                              </h4>
-                              <div>
-                                {statRankingToCheck.map((stat, index) => {
-                                  if (!rankingData[year][stat]) return null;
-                                  const playerItem = rankingData[year][stat].top3.find(item => item.id === playerId);
-                                  if (!playerItem) return null;
-                                  const rank = playerItem.rank;
-                                  const statValue = playerItem.value;
-                                  
-                                  if (statValue <= 0 || rank > 3) return null;
-                                  
-                                  const statLabels = {
-                                    goals: '득점',
-                                    assists: '어시스트',
-                                    cleanSheets: '클린시트',
-                                    matches: '출장',
-                                    momTop3Count: 'MOM TOP 3',
-                                    momTop8Count: 'MOM TOP 8'
-                                  };
-                                  
-                                  let icon, color, text;
-                                  
-                                  switch(rank) {
-                                    case 1:
-                                      icon = <FaTrophy style={{ color: 'gold' }} />;
-                                      color = 'gold';
-                                      text = `${statLabels[stat]} ${rank}위 (${statValue})`;
-                                      break;
-                                    case 2:
-                                      icon = <FaMedal style={{ color: 'silver' }} />;
-                                      color = 'silver';
-                                      text = `${statLabels[stat]} ${rank}위 (${statValue})`;
-                                      break;
-                                    case 3:
-                                      icon = <FaAward style={{ color: '#cd7f32' }} />;
-                                      color = '#cd7f32';
-                                      text = `${statLabels[stat]} ${rank}위 (${statValue})`;
-                                      break;
-                                    default:
-                                      return null;
-                                  }
-                                  
-                                  return (
-                                    <div key={index} style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      marginBottom: '6px',
-                                      color,
-                                      fontSize: '14px'
-                                    }}>
-                                      <span style={{ marginRight: '6px' }}>{icon}</span>
-                                      <span>{text}</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ))
-                      ) : (
-                        <p style={{ textAlign: 'center', color: '#black', width: '100%' }}>
-                          수상 기록이 없습니다
-                        </p>
-                      )}
-                    </div>
-                  );
-                })()
+                              return (
+                                <div key={index} style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  marginBottom: '6px',
+                                  color,
+                                  fontSize: '14px'
+                                }}>
+                                  <span style={{ marginRight: '6px' }}>{icon}</span>
+                                  <span>{text}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))
+                  ) : (
+                    <p style={{ textAlign: 'center', color: '#000', width: '100%' }}>
+                      수상 기록이 없습니다
+                    </p>
+                  )}
+                </div>
               )}
             </PHS.RankingSummary>
 
@@ -1028,10 +736,10 @@ const PlayerHistorySection = () => {
             {showGraphs && (
               <PHS.GraphSection>
                 <h3>연도별 성장 추이</h3>
-                
+
                 <PHS.StatSelector>
                   {statOptions.map(option => (
-                    <PHS.StatButton 
+                    <PHS.StatButton
                       key={option.value}
                       onClick={() => setSelectedStat(option.value)}
                       active={selectedStat === option.value}
@@ -1101,7 +809,7 @@ const PlayerHistorySection = () => {
                     </LineChart>
                   </ResponsiveContainer>
                 </PHS.GraphContainer>
-                
+
                 <PHS.GraphContainer>
                   <h3>{playerId}의 SOOP FC 올타임 기록</h3>
                   <PHS.SummaryCardContainer>
@@ -1127,12 +835,10 @@ const PlayerHistorySection = () => {
                           }}>
                             {stat.label}
                           </div>
-                          {renderTotalRank(stat.value)}
-                          {renderLegendBadge(totalStats[stat.value])}
                         </PHS.SummaryCard>
                       ))
                     ) : (
-                      <p>2022-2025년 기록이 없습니다.</p>
+                      <p>기록이 없습니다.</p>
                     )}
                   </PHS.SummaryCardContainer>
                 </PHS.GraphContainer>

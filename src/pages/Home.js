@@ -662,7 +662,7 @@ const Home = () => {
                       animation: 'float 3s ease-in-out infinite',
                     }}
                   >
-                    26년 회장 추천
+                    27년 회장 추천
                   </MatchButton>
                 )}
               </S.ButtonGroup>
@@ -675,19 +675,19 @@ const Home = () => {
           <S.StatsContainer>
             <S.StatItem>
               <S.StatValue>{stats.totalGoals}</S.StatValue>
-              <S.StatLabel>2025년 득점</S.StatLabel>
+              <S.StatLabel>2026년 득점</S.StatLabel>
             </S.StatItem>
             <S.StatItem>
               <S.StatValue>{stats.totalAssists}</S.StatValue>
-              <S.StatLabel>2025년 어시스트</S.StatLabel>
+              <S.StatLabel>2026년 어시스트</S.StatLabel>
             </S.StatItem>
             <S.StatItem>
               <S.StatValue>{stats.totalCleanSheets}</S.StatValue>
-              <S.StatLabel>25년 누적 클린시트</S.StatLabel>
+              <S.StatLabel>26년 누적 클린시트</S.StatLabel>
             </S.StatItem>
             <S.StatItem>
               <S.StatValue>{stats.members}명</S.StatValue>
-              <S.StatLabel>SOOP FC 회원 수</S.StatLabel>
+              <S.StatLabel>SOOP FC 누적 회원 수</S.StatLabel>
             </S.StatItem>
             <S.StatItem>
               <S.StatValue>{stats.attackpersonalPoints}</S.StatValue>
