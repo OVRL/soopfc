@@ -13,8 +13,8 @@ const PlayerHistorySectionAdmin = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [capsLockOn, setCapsLockOn] = useState(false);
   const [logs, setLogs] = useState([]);
-  const [selectedYear, setSelectedYear] = useState('2022');
-  const [years, setYears] = useState(['2022', '2023', '2024', '2025']);
+  const [selectedYear, setSelectedYear] = useState('2026');
+  const [years, setYears] = useState(['2022', '2023', '2024', '2025', '2026']);
   const [historyData, setHistoryData] = useState([]);
   const [playerData, setPlayerData] = useState({
     name: '', goals: '', assists: '', cleanSheets: '', matches: '',
@@ -116,8 +116,8 @@ const PlayerHistorySectionAdmin = () => {
     const { name, goals, assists, cleanSheets, matches, win, draw, lose, personalPoints, momScore, winRate, momTop3Count, momTop8Count } = playerData;
 
     if (!name || !selectedYear || isNaN(goals) || isNaN(assists) || isNaN(cleanSheets) || isNaN(matches) ||
-        isNaN(win) || isNaN(draw) || isNaN(lose) || isNaN(personalPoints) || isNaN(momScore) || isNaN(winRate) ||
-        isNaN(momTop3Count) || isNaN(momTop8Count)) {
+      isNaN(win) || isNaN(draw) || isNaN(lose) || isNaN(personalPoints) || isNaN(momScore) || isNaN(winRate) ||
+      isNaN(momTop3Count) || isNaN(momTop8Count)) {
       return alert('모든 필드를 올바르게 입력해주세요.');
     }
 

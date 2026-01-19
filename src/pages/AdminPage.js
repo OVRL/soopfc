@@ -35,8 +35,8 @@ const AdminPage = () => {
     cleanSheets: '', win: '', draw: '', lose: '', winRate: '', personalPoints: '', momScore: '',
     momTop3Count: '', momTop8Count: ''
   });
-  const [selectedYear, setSelectedYear] = useState('2025');
-  const [years, setYears] = useState(['2022', '2023', '2024', '2025']);
+  const [selectedYear, setSelectedYear] = useState('2026');
+  const [years, setYears] = useState(['2022', '2023', '2024', '2025', '2026']);
 
   // --- 로그 추가 헬퍼 ---
   const addLog = (msg) => {
