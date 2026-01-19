@@ -120,7 +120,7 @@ const formatDate = dateString => {
   return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')} (${['일', '월', '화', '수', '목', '금', '토'][date.getDay()]})`;
 };
 
-// Formation positions - 모든 포메이션 다 넣음
+// Formation positions (사용자가 원하는 그대로 유지)
 const FORMATIONS = {
   '4-3-3': {
     desktop: [
@@ -375,7 +375,7 @@ const DesktopFormation = ({ teams, highlightedPlayer, highlightPlayer, goalAssis
   );
 };
 
-// renderFormation 함수
+// renderFormation (사용자가 원하는 그대로 유지)
 const renderFormation = (team, isHomeTeam, isMobile, highlightedPlayer, highlightPlayer, side, goalAssistPairs, ownGoals = [], handlePlayerClick) => {
   if (!team?.players?.length) return (
     <div className="absolute inset-0 flex items-center justify-center text-white">
@@ -397,9 +397,77 @@ const renderFormation = (team, isHomeTeam, isMobile, highlightedPlayer, highligh
         newPos.top = '47%';
         newPos.left = '93%';
       }
-      // ... (기존 위치 조정 로직 그대로 유지)
+      if (!isHomeTeam) {
+        if (newPos.position === 'GK') {
+          newPos.top = '47%';
+          newPos.left = '94%';
+        }
+        if (newPos.position.startsWith('CB1')) {
+          newPos.top = '35%';
+          newPos.left = '85%';
+        }
+        if (newPos.position.startsWith('CB2')) {
+          newPos.top = '55%';
+          newPos.left = '85%';
+        }
+        if (newPos.position.startsWith('CDM1')) {
+          newPos.top = '55%';
+          newPos.left = '77%';
+        }
+        if (newPos.position.startsWith('CDM2')) {
+          newPos.top = '35%';
+          newPos.left = '77%';
+        }
+        if (newPos.position.startsWith('LB')) {
+          newPos.top = '8%';
+          newPos.left = '85%';
+        }
+        if (newPos.position.startsWith('RB')) {
+          newPos.top = '85%';
+          newPos.left = '85%';
+        }
+        if (newPos.position.startsWith('CAM')) {
+          newPos.top = '47%';
+          newPos.left = '67%';
+        }
+        if (newPos.position.startsWith('RW')) {
+          newPos.top = '80%';
+          newPos.left = '55%';
+        }
+        if (newPos.position.startsWith('LW')) {
+          newPos.top = '20%';
+          newPos.left = '55%';
+        }
+        if (newPos.position.startsWith('ST')) {
+          newPos.top = '47%';
+          newPos.left = '55%';
+        }
+        if (newPos.position.startsWith('ST1')) {
+          newPos.top = '35%';
+          newPos.left = '55%';
+        }
+        if (newPos.position.startsWith('ST2')) {
+          newPos.top = '60%';
+          newPos.left = '55%';
+        }
+      }
     } else {
-      // ... (기존 모바일 위치 조정 로직 그대로 유지)
+      if (!isHomeTeam) {
+        if (newPos.position === 'GK') newPos.top = '92%';
+        else if (newPos.position.includes('CB') || newPos.position.includes('RB') || newPos.position.includes('LB'))
+          newPos.top = '85%';
+        else if (newPos.position.includes('CM') || newPos.position.includes('RM') || newPos.position.includes('LM'))
+          newPos.top = '70%';
+        else if (newPos.position.includes('CDM1') || newPos.position.includes('CDM2'))
+          newPos.top = '74%';
+        else if (newPos.position.includes('CAM'))
+          newPos.top = '65%';
+        else if (newPos.position.includes('ST') || newPos.position.includes('RW') || newPos.position.includes('LW'))
+          newPos.top = '56%';
+        else if (newPos.position === 'CAM') newPos.top = '63%';
+        else if (newPos.position.includes('CDM')) newPos.top = '71%';
+        else if (newPos.position === 'RWB' || newPos.position === 'LWB') newPos.top = '70%';
+      }
     }
     if (!isHomeTeam) {
       newPos.position = MIRROR_POSITION[newPos.position] || newPos.position;
@@ -705,7 +773,7 @@ function VodPage() {
       <MainContent>
         <PageTitle>SOOP FC 경기 기록</PageTitle>
 
-        {/* 연도 선택 버튼 */}
+        {/* 연도 선택 버튼 추가 */}
         <div style={{ 
           display: 'flex', 
           justifyContent: 'center', 
